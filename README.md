@@ -41,13 +41,18 @@ phishing-detection/
 
 ## Dataset
 
-The project expects a CSV file at `data/phishing.csv`. The sample dataset used here has:
+The project expects a CSV file (e.g., `data/phishing.csv`, `data/dataset.csv`) containing:
 
-- An `Index` column (row identifier)
-- Multiple numerical feature columns with values in \{-1, 0, 1\}
-- A binary target column named `class` with values \{-1, 1\}, where one of the values represents phishing and the other legitimate websites.
+- Multiple feature columns (numerical and/or categorical)
+- One binary target/label column (commonly named `class` or `Result`)
 
-> **Note**: No feature or label names are hard-coded beyond using `class` as the target label and dropping the `Index` column. All remaining columns are treated as numerical features.
+The included Kaggle-style datasets typically have:
+
+- An ID column like `Index` or `index` (dropped automatically if present)
+- Multiple numerical feature columns with values often in \{-1, 0, 1\}
+- A binary target column with values in \{-1, 1\}
+
+> **Note**: The pipeline can infer the label column (preferring `class`, `label`, `target`, `result`). If inference is ambiguous, pass `--label-col`.
 
 ## Installation
 
@@ -70,6 +75,24 @@ From the project root:
 
 ```bash
 python -m src.main --data-path data/phishing.csv --output-metrics results/metrics.csv
+```
+
+If your label column is different (e.g., `Result`):
+
+```bash
+python -m src.main --data-path data/dataset.csv --label-col Result --output-metrics results/metrics_dataset.csv
+```
+
+To change which numeric value is treated as the **positive** class for Precision/Recall/F1:
+
+```bash
+python -m src.main --data-path data/dataset.csv --positive-label -1
+```
+
+By default the script **saves** confusion matrices to `results/confusion_matrices.png` **and opens the plot window after a successful run**. To disable the popup (useful in headless environments):
+
+```bash
+python -m src.main --data-path data/phishing.csv --no-show-plots
 ```
 
 This will:

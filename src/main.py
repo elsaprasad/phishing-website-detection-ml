@@ -51,10 +51,40 @@ def parse_args() -> argparse.Namespace:
         default="results/metrics.csv",
         help="Path to save the evaluation metrics as a CSV file.",
     )
+    parser.add_argument(
+        "--label-col",
+        type=str,
+        default=None,
+        help="Name of the target label column. If omitted, it will be inferred (e.g., 'class' or 'Result').",
+    )
+    parser.add_argument(
+        "--positive-label",
+        type=float,
+        default=1,
+        help="Which label value should be treated as the positive class for precision/recall/F1.",
+    )
+    parser.add_argument(
+        "--confusion-plot-path",
+        type=str,
+        default="results/confusion_matrices.png",
+        help="Path to save the combined confusion matrix figure.",
+    )
+    parser.add_argument(
+        "--no-show-plots",
+        action="store_true",
+        help="If set, do not display confusion matrix plots (only save to file).",
+    )
     return parser.parse_args()
 
 
-def run_pipeline(data_path: Path, output_metrics_path: Path) -> pd.DataFrame:
+def run_pipeline(
+    data_path: Path,
+    output_metrics_path: Path,
+    label_col: str | None,
+    positive_label: float,
+    show_plots: bool,
+    confusion_plot_path: Path,
+) -> pd.DataFrame:
     """
     Run the full ML pipeline: load, preprocess, train, evaluate, and save metrics.
 
@@ -76,7 +106,7 @@ def run_pipeline(data_path: Path, output_metrics_path: Path) -> pd.DataFrame:
 
     # 2. Preprocess data.
     print("[INFO] Preprocessing data (handling missing values, splitting, scaling)...")
-    preprocessed: PreprocessedData = preprocess_data(df)
+    preprocessed: PreprocessedData = preprocess_data(df, label_col=label_col)
 
     # 3. Define models.
     print("[INFO] Initializing models...")
@@ -95,7 +125,7 @@ def run_pipeline(data_path: Path, output_metrics_path: Path) -> pd.DataFrame:
             model=trained_model,
             X_test=preprocessed.X_test,
             y_test=preprocessed.y_test,
-            positive_label=1,
+            positive_label=positive_label,
         )
         results.append(result)
 
@@ -119,7 +149,11 @@ def run_pipeline(data_path: Path, output_metrics_path: Path) -> pd.DataFrame:
     # between numeric labels (e.g., -1 and 1) and semantic meaning
     # (phishing vs. legitimate) may vary by dataset. The default behavior
     # is to use the label values as ticks.
-    plot_confusion_matrices(results)
+    plot_confusion_matrices(
+        results,
+        save_path=confusion_plot_path,
+        show=show_plots,
+    )
 
     return metrics_df
 
@@ -129,7 +163,14 @@ def main() -> None:
     args = parse_args()
     data_path = Path(args.data_path)
     output_metrics = Path(args.output_metrics)
-    run_pipeline(data_path, output_metrics)
+    run_pipeline(
+        data_path=data_path,
+        output_metrics_path=output_metrics,
+        label_col=args.label_col,
+        positive_label=args.positive_label,
+        show_plots=not args.no_show_plots,
+        confusion_plot_path=Path(args.confusion_plot_path),
+    )
 
 
 if __name__ == "__main__":

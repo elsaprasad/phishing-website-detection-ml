@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from pathlib import Path
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -135,6 +136,8 @@ def plot_confusion_matrices(
     results: List[ModelResult],
     class_labels: List[str] | None = None,
     figsize: tuple[int, int] = (14, 8),
+    save_path: str | Path | None = None,
+    show: bool = True,
 ) -> None:
     """
     Plot confusion matrices for multiple model results.
@@ -147,6 +150,11 @@ def plot_confusion_matrices(
         Optional custom labels for the classes (e.g., ["Legitimate", "Phishing"]).
     figsize : tuple[int, int], default (14, 8)
         Size of the matplotlib figure.
+    save_path : str | Path | None, default None
+        If provided, save the generated figure to this path.
+    show : bool, default True
+        If True, display the figure interactively. If False, the figure is closed
+        after saving (useful for non-interactive/scripted runs).
     """
     n_models = len(results)
     if n_models == 0:
@@ -185,5 +193,13 @@ def plot_confusion_matrices(
         ax.axis("off")
 
     plt.tight_layout()
-    plt.show()
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 

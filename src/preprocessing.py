@@ -5,6 +5,7 @@ This module is responsible for:
 - Loading the CSV dataset
 - Handling missing values
 - Splitting into train and test sets
+- Encoding categorical features (if present)
 - Scaling numerical features with StandardScaler (fit on train, transform on test)
 
 All functions are written to avoid data leakage and to keep the code
@@ -15,12 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 RANDOM_STATE: int = 42
@@ -43,8 +47,8 @@ class PreprocessedData:
         Test labels.
     feature_names : List[str]
         Names of the feature columns used in X.
-    scaler : StandardScaler
-        Fitted scaler instance (fit on training features only).
+    transformer : ColumnTransformer
+        Fitted preprocessing transformer (fit on training features only).
     """
 
     X_train: np.ndarray
@@ -52,7 +56,7 @@ class PreprocessedData:
     y_train: np.ndarray
     y_test: np.ndarray
     feature_names: List[str]
-    scaler: StandardScaler
+    transformer: ColumnTransformer
 
 
 def load_dataset(csv_path: Path | str) -> pd.DataFrame:
@@ -77,10 +81,49 @@ def load_dataset(csv_path: Path | str) -> pd.DataFrame:
     return df
 
 
+def infer_label_column(df: pd.DataFrame) -> str:
+    """
+    Infer the label column name for a binary classification dataset.
+
+    Heuristics:
+    - Prefer common target names (case-insensitive): class, label, target, result
+    - Otherwise, if exactly one non-ID column is binary-valued, use it
+
+    If inference is ambiguous, raise a ValueError with guidance.
+    """
+    if df.shape[1] < 2:
+        raise ValueError("Dataset must have at least 2 columns (features + label).")
+
+    lowered = {c.lower(): c for c in df.columns}
+    preferred = ["class", "label", "target", "result"]
+    preferred_hits = [lowered[p] for p in preferred if p in lowered]
+    if len(preferred_hits) == 1:
+        return preferred_hits[0]
+    if len(preferred_hits) > 1:
+        raise ValueError(
+            "Multiple possible label columns found: "
+            f"{preferred_hits}. Please pass label_col explicitly."
+        )
+
+    id_like = {"index", "id", "rowid"}
+    candidate_cols = [c for c in df.columns if c.lower() not in id_like]
+    binary_cols = [
+        c for c in candidate_cols if df[c].nunique(dropna=True) == 2
+    ]
+    if len(binary_cols) == 1:
+        return binary_cols[0]
+
+    raise ValueError(
+        "Could not infer a unique binary label column. "
+        "Please pass label_col explicitly. "
+        f"Binary-like columns found: {binary_cols}"
+    )
+
+
 def preprocess_data(
     df: pd.DataFrame,
-    label_col: str = "class",
-    drop_cols: Tuple[str, ...] = ("Index",),
+    label_col: str | None = None,
+    drop_cols: Tuple[str, ...] = ("Index", "index", "ID", "id"),
     test_size: float = 0.2,
     random_state: int = RANDOM_STATE,
 ) -> PreprocessedData:
@@ -111,8 +154,9 @@ def preprocess_data(
     ----------
     df : pd.DataFrame
         Raw dataset.
-    label_col : str, default "class"
-        Name of the target column.
+    label_col : str or None, default None
+        Name of the target column. If None, the function attempts to infer it
+        (e.g., 'class' or 'Result').
     drop_cols : Tuple[str, ...], default ("Index",)
         Columns to drop before modeling (e.g., identifiers).
     test_size : float, default 0.2
@@ -132,6 +176,8 @@ def preprocess_data(
         if col in df.columns:
             df = df.drop(columns=[col])
 
+    if label_col is None:
+        label_col = infer_label_column(df)
     if label_col not in df.columns:
         raise ValueError(f"Label column '{label_col}' not found in dataset.")
 
@@ -139,36 +185,65 @@ def preprocess_data(
     X = df.drop(columns=[label_col])
     y = df[label_col]
 
-    feature_names = X.columns.tolist()
+    # Drop rows with missing label (cannot be used for supervised learning).
+    if y.isnull().any():
+        keep = ~y.isnull()
+        X = X.loc[keep].copy()
+        y = y.loc[keep].copy()
 
-    # Handle missing values: simple strategy -> fill with column median.
-    # For numerical-only datasets, median is robust and works well.
-    if X.isnull().sum().sum() > 0:
-        X = X.fillna(X.median(numeric_only=True))
-
-    # Convert to numpy arrays.
-    X_values = X.values
-    y_values = y.values
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_values,
-        y_values,
+    X_train_df, X_test_df, y_train, y_test = train_test_split(
+        X,
+        y,
         test_size=test_size,
         random_state=random_state,
-        stratify=y_values,
+        stratify=y,
     )
 
-    # Feature scaling: fit StandardScaler on training data only.
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # Build preprocessing:
+    # - Numerical: impute median + StandardScaler
+    # - Categorical: impute most-frequent + OneHotEncode
+    numeric_cols: Sequence[str] = X_train_df.select_dtypes(include=[np.number]).columns
+    categorical_cols: Sequence[str] = [
+        c for c in X_train_df.columns if c not in set(numeric_cols)
+    ]
+
+    numeric_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            # Scaling is required for distance / margin based models (KNN, SVM)
+            # so that features contribute proportionally and optimization is stable.
+            # Fit on train only, then transform train/test to prevent leakage.
+            ("scaler", StandardScaler()),
+        ]
+    )
+
+    categorical_pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]
+    )
+
+    transformer = ColumnTransformer(
+        transformers=[
+            ("num", numeric_pipeline, list(numeric_cols)),
+            ("cat", categorical_pipeline, list(categorical_cols)),
+        ],
+        remainder="drop",
+        verbose_feature_names_out=False,
+    )
+
+    X_train = transformer.fit_transform(X_train_df)
+    X_test = transformer.transform(X_test_df)
+
+    feature_names = list(transformer.get_feature_names_out())
 
     return PreprocessedData(
-        X_train=X_train_scaled,
-        X_test=X_test_scaled,
-        y_train=y_train,
-        y_test=y_test,
+        X_train=np.asarray(X_train),
+        X_test=np.asarray(X_test),
+        y_train=np.asarray(y_train),
+        y_test=np.asarray(y_test),
         feature_names=feature_names,
-        scaler=scaler,
+        transformer=transformer,
     )
 
