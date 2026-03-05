@@ -176,10 +176,23 @@ def preprocess_data(
         if col in df.columns:
             df = df.drop(columns=[col])
 
+    # determine which column contains the target labels
     if label_col is None:
         label_col = infer_label_column(df)
+
+    # perform a case-insensitive lookup so that users can specify
+    # --label-col CLASS or ``class`` and still match a column named
+    # ``Class`` or ``CLASS`` in the CSV.
     if label_col not in df.columns:
-        raise ValueError(f"Label column '{label_col}' not found in dataset.")
+        matches = [c for c in df.columns if c.lower() == label_col.lower()]
+        if len(matches) == 1:
+            label_col = matches[0]  # use the actual column name
+        else:
+            available = ", ".join(df.columns)
+            raise ValueError(
+                f"Label column '{label_col}' not found in dataset. "
+                f"Available columns: {available}"
+            )
 
     # Separate features and labels.
     X = df.drop(columns=[label_col])

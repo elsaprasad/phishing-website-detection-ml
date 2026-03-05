@@ -52,7 +52,16 @@ The included Kaggle-style datasets typically have:
 - Multiple numerical feature columns with values often in \{-1, 0, 1\}
 - A binary target column with values in \{-1, 1\}
 
-> **Note**: The pipeline can infer the label column (preferring `class`, `label`, `target`, `result`). If inference is ambiguous, pass `--label-col`.
+> **Note**: The pipeline can infer the label column (preferring `class`, `label`, `target`, `result`) using a case‑insensitive comparison. It also tolerates common identifier columns like `index` and will identify any unique binary column automatically.
+
+If inference fails or you are using a dataset with a different header name, pass `--label-col` explicitly. For example, if your file uses `Result`, run:
+
+```bash
+python -m src.main --data-path data/dataset.csv --label-col Result \
+    --output-metrics results/metrics_dataset.csv
+```
+
+This ensures the script picks the right column even when it is named differently from the defaults.
 
 ## Installation
 
